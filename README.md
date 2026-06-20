@@ -1,5 +1,5 @@
 <p align="center">
-    <img width="200" alt="viceroy" src="https://github.com/user-attachments/assets/f16454f1-93ec-4077-95b6-2bbdb3553ee4" />
+    <img width="300" alt="sticker" src="https://github.com/user-attachments/assets/393108b7-bce7-4779-b4cb-c2e73cf90880" />
 </p>
 
 <h1 align="center">Viceroy</h1>
