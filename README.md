@@ -1,3 +1,7 @@
+<p align="center">
+    <img width="200" alt="viceroy" src="https://github.com/user-attachments/assets/f16454f1-93ec-4077-95b6-2bbdb3553ee4" />
+</p>
+
 <h1 align="center">Viceroy</h1>
 
 <p align="center">
