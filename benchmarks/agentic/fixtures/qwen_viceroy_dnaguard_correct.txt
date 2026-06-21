@@ -1,0 +1,35 @@
+To add the missing guard condition to the `PCN` function, we need to check if `i1 + 2 > N0` before performing the calculations. If it is, we should set `ue0` to 0.0.
+Here's the modified `PCN` function:
+```c
+float PCN(int i1, int jc, float x1[chain_maxsize][max_size], float y1[chain_maxsize][max_size], float z1[chain_maxsize][max_size]) {
+    float d1, d2, d3, w, a1, ue0;
+    
+    if (i1 + 2 > N0) {
+        ue0 = 0.0;
+    } else {
+        d1 = sqrt((x1[jc][i1-1] - x1[jc][i1-2]) * (x1[jc][i1-1] - x1[jc][i1-2]) +
+                    (y1[jc][i1-1] - y1[jc][i1-2]) * (y1[jc][i1-1] - y1[jc][i1-2]) +
+                    (z1[jc][i1-1] - z1[jc][i1-2]) * (z1[jc][i1-1] - z1[jc][i1-2]));
+        d2 = sqrt((x1[jc][i1-1] - x1[jc][i1]) * (x1[jc][i1-1] - x1[jc][i1]) +
+                    (y1[jc][i1-1] - y1[jc][i1]) * (y1[jc][i1-1] - y1[jc][i1]) +
+                    (z1[jc][i1-1] - z1[jc][i1]) * (z1[jc][i1-1] - z1[jc][i1]));
+        d3 = sqrt((x1[jc][i1-2] - x1[jc][i1]) * (x1[jc][i1-2] - x1[jc][i1]) +
+                    (y1[jc][i1-2] - y1[jc][i1]) * (y1[jc][i1-2] - y1[jc][i1]) +
+                    (z1[jc][i1-2] - z1[jc][i1]) * (z1[jc][i1-2] - z1[jc][i1]));
+        w = (d1*d1 + d2*d2 - d3*d3) / (2.0 * d1 * d2);
+        
+        if (w <= -1.0) {
+            a1 = 3.14;
+        } else if (w >= 1.0) {
+            a1 = 0.;
+        } else {
+            a1 = acos(w);
+        }
+        
+        ue0 = kpcN * (a1 - ApcN) * (a1 - ApcN);
+    }
+    
+    return ue0;
+}
+```
+This modification ensures that the `PCN` function will not attempt to access array elements outside of its bounds, thus preventing potential runtime errors.

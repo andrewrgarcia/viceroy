@@ -40,6 +40,20 @@ const { extractSwaps } = require('./applyability.js');
 
 const norm = (s) => String(s == null ? '' : s).replace(/\r\n/g, '\n');
 
+// Format-insensitive canonical form of a chunk of C, for deciding whether two
+// functions are "the same" regardless of how they're spaced or indented.
+// Strips ALL whitespace, so `if(i1+2>N0)` and `if (i1 + 2 > N0)` and a
+// reindented multi-line body all collapse to the same string. This is the fix
+// for the false 0% task-done: a model that solves the bug but reformats the
+// function (qwen does this constantly) was being scored as "changed the wrong
+// way / deleted the target" purely because of spacing. Correctness is about
+// whether the bug is fixed, not how the code is spaced.
+const canon = (s) => norm(s).replace(/\s+/g, '');
+
+// Same idea for the required-token check: the guard `i1+2>N0` must be found in
+// the target even if the model wrote it as `i1 + 2 > N0`.
+const canonHas = (haystack, needle) => canon(haystack).includes(canon(needle));
+
 // --- split top-level C functions: Map(name -> verbatim full text) ------------
 // Heuristic, not a full C parser: a top-level definition starts at column 0
 // with a return type and name, has a parenthesized arg list containing no `;`
@@ -119,19 +133,29 @@ function reconstructResult(answer, original) {
       return { shape: 'whole', file: biggest, swaps: [] };
     }
   }
-  return { shape: 'prose', file: null, swaps: [] }; // described, never delivered
+  return { shape: 'prose', file: null, swaps: [], proseCode: blocks.join('\n') }; // described, not delivered in an applyable shape
 }
 
 // --- the structural diff at function granularity -----------------------------
 // targetFn: the function the task is allowed to change.
 // requiredToken: a string that must appear in the target after a correct edit.
-function blastRadius(original, result, { targetFn, requiredToken }) {
+function blastRadius(original, result, { targetFn, requiredToken }, proseCode) {
   const o = splitCFunctions(original);
   if (result == null) {
-    // Nothing was delivered (prose only). The honest verdict: the task is not
-    // done, but no code was damaged either -- so collateral is empty, not "every
-    // function deleted". A do-nothing answer is harmless AND useless; the
-    // task-done column is what fails it, not a phantom collateral count.
+    // Nothing was delivered as a whole file or applied swap -- but the answer's
+    // prose may still CONTAIN the corrected target function in a code block.
+    // Per design: a correct fix counts as task-done even when delivered as prose
+    // (delivery format is a separate axis from "did the bug get fixed"). So we
+    // look for the target function inside whatever code the answer included, and
+    // score correctness from it. We do NOT treat the absent siblings as deleted
+    // -- a prose snippet isn't a destructive whole-file rewrite -- so collateral
+    // stays empty (harmless), and `delivered:false` records that it wasn't
+    // handed over in an applyable shape.
+    const inProse = proseCode ? splitCFunctions(proseCode) : new Map();
+    const targetPresent = inProse.has(targetFn);
+    const targetChanged = targetPresent && o.has(targetFn)
+      && canon(inProse.get(targetFn)) !== canon(o.get(targetFn));
+    const targetHasToken = targetPresent && canonHas(inProse.get(targetFn), requiredToken);
     return {
       shape: 'prose',
       missing: [],
@@ -140,21 +164,23 @@ function blastRadius(original, result, { targetFn, requiredToken }) {
       collateral: [],
       noCollateral: true,
       delivered: false,
-      targetPresent: false,
-      targetChanged: false,
-      targetHasToken: false,
-      taskDone: false,
+      targetPresent,
+      targetChanged,
+      targetHasToken,
+      taskDone: targetChanged && targetHasToken,
     };
   }
   const r = splitCFunctions(result);
   const missing = [...o.keys()].filter((n) => !r.has(n));
-  const changed = [...o.keys()].filter((n) => r.has(n) && r.get(n) !== o.get(n));
+  // "changed" = not the same function after format-insensitive canonicalization.
+  // Reindenting or respacing a function is NOT a change; altering what it does is.
+  const changed = [...o.keys()].filter((n) => r.has(n) && canon(r.get(n)) !== canon(o.get(n)));
   const added = [...r.keys()].filter((n) => !o.has(n));
-  const touched = new Set([...missing, ...changed]); // not byte-identical to original
+  const touched = new Set([...missing, ...changed]); // not equivalent to original
   const collateral = [...touched].filter((n) => n !== targetFn);
   const targetPresent = r.has(targetFn);
-  const targetChanged = targetPresent && r.get(targetFn) !== o.get(targetFn);
-  const targetHasToken = targetPresent && norm(r.get(targetFn)).includes(requiredToken);
+  const targetChanged = targetPresent && canon(r.get(targetFn)) !== canon(o.get(targetFn));
+  const targetHasToken = targetPresent && canonHas(r.get(targetFn), requiredToken);
   return {
     missing,
     changed,
@@ -171,8 +197,8 @@ function blastRadius(original, result, { targetFn, requiredToken }) {
 
 // --- top-level: analyze a model answer against the original + task meta -------
 function analyze(answer, original, taskMeta) {
-  const { shape, file } = reconstructResult(answer, original);
-  const br = blastRadius(original, file, taskMeta);
+  const { shape, file, proseCode } = reconstructResult(answer, original);
+  const br = blastRadius(original, file, taskMeta, proseCode);
   return { shape, ...br };
 }
 
@@ -358,6 +384,24 @@ if (require.main === module && process.argv.includes('--selftest')) {
     ok(!aReal.noCollateral, 'real qwen baseline: correctly flagged as collateral damage -- applyable, yet broken');
   } catch (e) {
     console.log('-- (skipped real-capture regression: fixtures not found at expected path)');
+  }
+
+  // THE capstone for format-insensitive correctness: qwen2.5-coder's REAL
+  // viceroy-arm answer on dna-guard. It SOLVED the bug -- added the i1+2>N0
+  // guard to PCN, correct logic -- but delivered it as reformatted prose
+  // (`i1 - 1` spacing, reindented, wrapped in explanation). Before the fix it
+  // scored task-done=NO purely because it didn't match the original byte-for-
+  // byte. Per the design call (a correct fix counts even as prose, and spacing
+  // doesn't matter), it must now score task-done=YES.
+  try {
+    const real = fs.readFileSync(path.join(__dirname, 'agentic', 'fixtures', 'DNA_slice.c'), 'utf8');
+    const correct = fs.readFileSync(path.join(__dirname, 'agentic', 'fixtures', 'qwen_viceroy_dnaguard_correct.txt'), 'utf8');
+    const aGood = analyze(correct, real, { targetFn: 'PCN', requiredToken: 'i1+2>N0' });
+    ok(aGood.taskDone, 'real qwen correct fix (reformatted prose) scores task-done=YES (format-insensitive)');
+    ok(aGood.noCollateral, 'real qwen correct fix: no collateral (it only touched PCN, prose siblings not penalized)');
+    ok(aGood.shape === 'prose', 'real qwen correct fix: shape is prose (delivery format is a SEPARATE axis from correctness)');
+  } catch (e) {
+    console.log('-- (skipped correct-prose regression: fixtures not found at expected path)');
   }
 
   console.log(`\nself-test: ${pass} passed, ${fail} failed${fail ? '  -- BROKEN' : '  -- all instruments valid'}`);
