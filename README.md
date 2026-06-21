@@ -118,6 +118,16 @@ baseline   100%          0%          0%
 
 The honest division of labor: *task-done* mostly reflects the model's coding ability, while *collateral-free* is the genuinely Viceroy-attributable axis — a surgical swap of `PCN` **cannot** corrupt `CPC`, because it never reproduces `CPC`; the baseline's whole-file rewrite had 77 lines of opportunity to break things and took it. Both `blast-radius.js` and the original checker run with `--selftest`, no API, no cost; `blast-radius`'s self-test includes qwen's *actual* captured failure as a pinned regression so this exact gaming case can never silently pass again.
 
+**Round 5 — measuring the actual claim: reader cost.** Applyability and blast-radius both measure the *output*: is it droppable, is it correct. Neither measures what Viceroy is really *for* — that a precise instruction costs the human less effort to act on than a vague one. That sounds subjective, but it has a mechanical core: the effort to turn an instruction into the correct edit is the information the reader must *supply that the instruction didn't* — the conditional complexity `K(edit | instruction)`. That has a standard, deterministic, human-free estimator: Normalized Compression Distance (`gzip`-based). `benchmarks/cognitive-load.js` computes it — no test subjects, no self-report, no LLM judge, just: how information-distant is the instruction from the change it asks for? On the real `dna-guard` instructions, both aimed at the identical correct edit:
+
+```
+arm        info-distance to edit   handed over verbatim   reader reconstructs
+viceroy    0.16                    100%                     0%
+baseline   0.87                      8%                    92%
+```
+
+The vague instruction sits ~5× further (in information distance) from the actual change and leaves the human to rebuild 92% of it. That is the claim — specificity lowers reader cost — finally measured mechanically rather than asserted. The metric is honest about its scope: `gzip` sees *literal* overlap, which is exactly Viceroy's verbatim-delivery mechanism, so it's well matched here; an instruction that conveys the fix purely *semantically* would look vague to it even if a human found it easy (the language-model-surprisal variant, grounded in psycholinguistic surprisal theory, is the heavier instrument for that case — noted in the file, not yet built). Self-test: 7 cases, no API.
+
 Reproduce any of this yourself, for $0:
 
 ```bash
@@ -127,7 +137,26 @@ node mini-agent.js --model qwen2.5-coder --task dna-guard --compare --runs 10
 node mini-agent.js --model qwen2.5-coder --task all --compare --runs 10   # both tasks
 ```
 
-**What this is not, yet:** a benchmark with real statistical weight. Two tasks and `n=10` is a start, not a headline number — see [Roadmap](#roadmap). A real number needs several more tasks of this difficulty, more runs, and ideally a bigger model alongside the free local one. Until that exists, this README keeps showing the real, current, small results — including the null ones and the reasons behind them — instead of a polished table.
+**Round 6 — a second bug shape, and the first real aggregate.** One real task can't tell you whether a result is about Viceroy or about that one task's lucky framing. `dna-bound` adds a second task from the *same* messy file but a deliberately different failure mode: instead of a missing guard to copy, it's a guard that's *present but insufficient* — three of four sibling functions share one bounds-check pattern, but the buggy one (`CPCP`) needs a different bound than its siblings because it reads further. Copying the majority pattern verbatim — the obvious, plausible move — produces a no-op that leaves the bug in place. This punishes confident pattern-matching, not just carelessness, which is a genuinely different way for a baseline to fail. Pooling both real tasks together (excluding the throwaway `cache-fn` sanity task):
+
+```
+arm        applyable   task-done   collateral-free   reader-reconstructs
+viceroy    2/2 (100%)  2/2 (100%)  2/2 (100%)        0%
+baseline   2/2 (100%)  0/2 (0%)    1/2 (50%)         18%
+```
+
+Worth noting honestly: baseline's *collateral-free* column is 50%, not 0% — because `dna-bound`'s failure (a no-op) doesn't corrupt anything, unlike `dna-guard`'s (a deletion + corruption). The aggregate keeps that distinction visible rather than averaging it into a single misleading number; *task-done* is the axis that catches both failure shapes equally (0% either way), which is itself informative about which metric generalizes. Building this also caught a real bug in `blast-radius.js`: a one-function illustrative snippet shown against a multi-function file was being misclassified as "a whole-file rewrite that deleted everything else," when it was actually a do-nothing description. Fixed (the threshold is now "looks like most of the file," not "contains at least one function"), and pinned as a dedicated regression test. Self-test: 26 cases now.
+
+Reproduce any of this yourself, for $0:
+
+```bash
+ollama pull qwen2.5-coder
+cd benchmarks/agentic
+node mini-agent.js --model qwen2.5-coder --task dna-guard --compare --runs 10
+node mini-agent.js --model qwen2.5-coder --task all --compare --runs 10   # all tasks + the aggregate
+```
+
+**What this is not, yet:** a benchmark with the statistical weight of, say, ponytail's 12-task agentic run. Two real bug shapes and `n=1` in the demo (you supply the real `n=10+` from your own model) is a start, not a headline number — see [Roadmap](#roadmap). A real number needs several more tasks at this difficulty across more files, more runs, and ideally a second model alongside the free local one. Until that exists, this README keeps showing the real, current, small results — including the null ones and the reasons behind them — instead of a polished table.
 
 ## How it works
 
@@ -175,7 +204,10 @@ Modes: `/viceroy auto` (default, judges whole-vs-swap per change), `/viceroy who
 - [x] No-skill baseline arm — wired and proven (viceroy 100% / baseline 0% once both demo data and the checker were correct)
 - [x] A real-world fixture task (`dna-guard`): a byte-exact, unmodified slice of published scientific C, chosen specifically to stress "find the right spot among near-duplicates"
 - [x] Second deterministic gate (`blast-radius.js`): task-completion + collateral-damage, because applyability alone can be gamed by a whole-file dump that does nothing (23 self-tests, incl. qwen's real captured failure pinned)
-- [ ] Multi-task benchmark: several more tasks at this difficulty, many runs each, aggregated across all three axes with real statistical weight
+- [x] The keystone metric (`cognitive-load.js`): deterministic reader-reconstruction cost (gzip-NCD + verbatim coverage), measuring Viceroy's actual claim — instruction specificity, not just output soundness — with no humans and no AI judge (7 self-tests)
+- [x] Multi-task benchmark: a second real task (`dna-bound`) with a genuinely different bug shape — wrong-target pattern-matching, not destructive carelessness — plus a pooled cross-task aggregate that keeps the two failure modes visible rather than averaging them away (26 blast-radius self-tests now, one fixed during this build: a single-function illustrative snippet was misclassified as "whole file, everything else deleted")
+- [ ] More tasks at this difficulty across more files, more runs each, ideally a second model alongside the free local one, for real statistical weight
+- [ ] Language-model-surprisal variant of reader-cost (captures semantic delivery, grounded in psycholinguistic surprisal theory) as a second lens alongside the gzip floor
 - [ ] Seam-quality judge for the "tidier on the way out" law (extraction quality, behavior preserved)
 - [ ] Full plugin adapters with mode switching (Claude Code / Codex / OpenCode) and a `check-rule-copies` alignment script
 - [ ] `/viceroy-review` companion: scan a diff for un-applyable or elided edits

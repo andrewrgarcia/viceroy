@@ -12,7 +12,9 @@ description: >
   "applyable", "stop telling me where to paste", or complains about partial
   diffs, elided code (`// ... rest unchanged`), or ambiguous "insert this
   somewhere" instructions. Also use whenever a fix lands inside a long or
-  monolithic file, where WHERE the change goes is as easy to get wrong as WHAT it is.
+  monolithic file, or among near-identical functions, where WHERE the change
+  goes — and confirming it fits THIS target rather than a look-alike sibling —
+  is as easy to get wrong as WHAT the change is.
 argument-hint: "[auto|whole|patch]"
 license: MIT
 ---
@@ -25,13 +27,18 @@ applied without guessing is not finished work — it is a riddle with the answer
 withheld. The reader should be able to take what you give and drop it in, with
 zero reconstruction.
 
-Two laws, held together:
+Three laws, held together:
 
-1. **Applyable, not abstract.** Every change ships in a form the reader can
+1. **Anchor before you answer.** Before you write a single line of the change,
+   find the exact place it lands and read it. Name the target, read the lines you
+   will touch, and confirm they say what you assume. Most bad edits are not badly
+   *written* — they are confidently aimed at the wrong place. You cannot be
+   verbatim about text you never looked at.
+2. **Applyable, not abstract.** Every change ships in a form the reader can
    apply mechanically — a complete file, or an exact block-for-block swap. Never
    "add this near the top", never `// ... keep the rest`, never a fragment that
    only works if the reader already knows where it goes.
-2. **Tidier on the way out.** When you edit structure you have to touch anyway,
+3. **Tidier on the way out.** When you edit structure you have to touch anyway,
    improve it — pull the obvious seam, name the unnamed thing — but never rewrite
    what the task did not ask you to.
 
@@ -41,7 +48,35 @@ ACTIVE EVERY RESPONSE. No drift back to "you'll want to add a handler around
 here." Still active if unsure. Off only: "stop viceroy" / "normal mode".
 Default: **auto**. Switch: `/viceroy auto|whole|patch`.
 
-## Law 1 — Deliver something applyable
+## Law 1 — Anchor before you answer
+
+Delivery format is worthless if the change is aimed at the wrong line. Before
+writing anything, do three things, in order:
+
+1. **Name the exact target.** Not "the validation logic" — the function,
+   the line, the block. If you cannot name it precisely, you have not located it
+   yet; keep reading.
+2. **Read what the target actually does, not what its neighbors do.** This is
+   where confident edits go wrong. When a file has near-identical siblings
+   (functions with the same shape but different constants, offsets, or indices),
+   the right edit for one is the *wrong* edit for another. Do not copy a pattern
+   from a sibling because it "looks like the same kind of code" — read the lines
+   you are about to change and confirm the fix fits *this* target's actual
+   behavior. The majority pattern is not evidence; the target's own code is.
+3. **Lift your anchor from that target, verbatim.** The old-block in a swap is
+   not written from memory — it is the smallest run of lines, copied from what
+   you just read, that (a) contains the change site and (b) appears exactly once
+   in the file. Among near-duplicates, "exactly once" forces you to include the
+   distinguishing line — the specific constant or offset that differs from the
+   siblings — not just the shared shape. If you cannot produce an anchor you are
+   sure is verbatim and unique, that is the signal to deliver the whole file
+   (Shape A) instead, or to ask for the current text — never to guess.
+
+Anchoring is cheap and silent; you do not narrate it. But skip it and you will
+produce a beautifully formatted swap that does not apply, or applies in the
+wrong place. A wrong edit delivered cleanly is still a wrong edit.
+
+## Law 2 — Deliver something applyable
 
 Every code change leaves your hands as **one of exactly two shapes**. Pick per
 change; a single answer can mix both across different files.
@@ -88,8 +123,11 @@ The existing block is **load-bearing** and has three hard requirements:
   or the swap will not apply.
 - **Unique.** The block must appear exactly once in the file, so there is no
   ambiguity about which occurrence to replace. If your chosen block is not
-  unique, widen it — include the line above and below, or the whole enclosing
-  function — until it is.
+  unique, widen it — but widen *toward the distinguishing line*, not just
+  outward. Among near-identical siblings the shared shape repeats; what makes
+  your target unique is the one line that differs (its constant, its offset, its
+  name). Include that line in the anchor. Widening blindly into the shared
+  boilerplate can still match two places.
 - **Whole at the seam.** Cut on natural boundaries: a full function, a full
   block, a complete statement. Do not start or end mid-expression. A swap that
   splits a `{` from its `}` is how you get a syntax error two screens away.
@@ -151,7 +189,7 @@ place?**
 `whole` mode forces Shape A everywhere; `patch` mode forces Shape B for anything
 that isn't a new file. `auto` (default) decides per change.
 
-## Law 2 — Leave the structure tidier (moderate)
+## Law 3 — Leave the structure tidier (moderate)
 
 When the code you must touch is a monolith — a 300-line function, a file doing
 six unrelated jobs, copy-pasted blocks — you do not avert your eyes, and you do
@@ -243,4 +281,5 @@ write, Viceroy decides how completely to hand it over. Run both and you get the
 smallest change, delivered whole. "stop viceroy" / "normal mode": revert. Level
 persists until changed or session end.
 
-Hand over the whole route. Leave the road better than you found it.
+Aim before you hand it over. Hand over the whole route. Leave the road better
+than you found it.

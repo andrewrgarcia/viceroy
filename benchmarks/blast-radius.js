@@ -105,11 +105,17 @@ function reconstructResult(answer, original) {
   if (blocks.length) {
     const biggest = norm(blocks.slice().sort((a, b) => b.length - a.length)[0]);
     // A fenced block is only a WHOLE-FILE replacement if it actually looks like
-    // the file -- i.e. it contains at least one top-level function definition.
-    // An illustrative snippet (a stray `if` block, a one-function example) has
-    // none, and must NOT be mistaken for "the model rewrote the whole file and
-    // deleted everything else". That is a description, not a delivery: prose.
-    if (splitCFunctions(biggest).size >= 1) {
+    // the file -- i.e. it contains MOST of the original's top-level functions,
+    // not just one. A single-function illustrative snippet ("here's what CPCP
+    // looks like", a stray `if` block) is a description, not a delivery: prose.
+    // Threshold: at least half the original's function count (floor 1, so a
+    // single-function original still requires that one function to be present).
+    // Without this, a 1-function snippet against a multi-function original was
+    // being scored as "the whole file, and everything else got silently
+    // deleted" -- a real misclassification this replaced.
+    const originalFnCount = splitCFunctions(original).size;
+    const threshold = Math.max(1, Math.ceil(originalFnCount / 2));
+    if (splitCFunctions(biggest).size >= threshold) {
       return { shape: 'whole', file: biggest, swaps: [] };
     }
   }
@@ -286,6 +292,29 @@ if (require.main === module && process.argv.includes('--selftest')) {
   ok(a4.missing.length === 0 && a4.collateral.length === 0, 'a non-delivery answer reports NO phantom deletions or collateral');
   ok(!a4.taskDone, 'a prose-only answer is not task-done (nothing was delivered)');
   ok(a4.noCollateral && !a4.delivered, 'prose answer: harmless (collateral-free) but undelivered -- the task-done column is what fails it');
+
+  // 5b. THE other half of the same bug, sharper: a snippet containing exactly
+  //     ONE complete, real function (not a bare fragment with zero functions,
+  //     as in 5 above) shown as an illustration -- "here's what foo looks like,
+  //     it already matches the pattern" -- against a 3-function original. This
+  //     must ALSO be prose, not "whole file, bar and baz deleted". This is the
+  //     exact shape that slipped through before the >=1 threshold was replaced
+  //     with a majority-of-functions threshold (found via the dna-bound task,
+  //     where a baseline answer illustrated one unchanged function in isolation
+  //     and was wrongly scored as having deleted its three siblings).
+  const oneFunctionIllustration = [
+    'Looking at it, `foo` already matches the pattern used elsewhere:',
+    '',
+    '```c',
+    'float foo(int i)\n{\n float v;\n v=compute(i);\n return v;\n}',
+    '```',
+    '',
+    'So no change is needed.',
+  ].join('\n');
+  const a4b = analyze(oneFunctionIllustration, ORIGINAL, META);
+  ok(a4b.shape === 'prose', 'a snippet with exactly ONE real function (vs a 3-function original) is prose, not whole-file');
+  ok(a4b.missing.length === 0, 'bar and baz are NOT reported as deleted just because they are absent from a one-function illustration');
+  ok(!a4b.taskDone, 'an illustration that changes nothing is correctly not task-done');
 
   // 6. robustness: a function whose braces DON'T balance (a model dropped a `}`)
   //    must NOT blind the splitter to the functions after it. Here bar is

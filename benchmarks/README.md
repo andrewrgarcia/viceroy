@@ -2,6 +2,16 @@
 
 Viceroy claims its edits **apply cleanly** — you can drop them in without hunting for the spot or reconstructing elided code. That is a property you can measure deterministically, which is the whole point: the headline number is a fact, not a vibe.
 
+Three deterministic instruments, each runnable with `--selftest` (no API, no cost):
+
+| instrument | question | self-tests |
+|---|---|---|
+| `applyability.js` | can the edit be dropped in? (verbatim, unique, no elision) | 20 |
+| `blast-radius.js` | did it do the job without breaking a neighbor? | 26 |
+| `cognitive-load.js` | what does the instruction cost the reader to act on? | 7 |
+
+The first two measure the *output*. The third (`cognitive-load.js`) measures Viceroy's actual claim — that a precise instruction costs the human less effort than a vague one — via Normalized Compression Distance (`gzip`), with no test subjects and no LLM judge. On the real `dna-guard` instructions, the vague baseline sits ~5× further in information-distance from the correct edit and leaves the reader to reconstruct 92% of it, versus 0% for the Viceroy exact swap.
+
 ## What is measured
 
 Two deterministic axes, plus one judged axis.

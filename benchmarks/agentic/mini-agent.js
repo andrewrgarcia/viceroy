@@ -44,6 +44,7 @@ const path = require('path');
 const http = require('http');
 const { scoreAnswer } = require('../applyability.js');
 const { analyze } = require('../blast-radius.js');
+const { readerLoad } = require('../cognitive-load.js');
 
 // --- task 1: cache-fn -- trivial synthetic file (sanity-check task) ----------
 const CACHE_FN_FILE = 'service.py';
@@ -197,6 +198,97 @@ function buildDnaGuardDemo(source) {
   };
 }
 
+
+// --- task 3: dna-bound -- a DIFFERENT real bug, harder: don't pattern-match -----
+// Source: same file, lines 557-645 (program/DNA.c, RNA-folding-lab/DNAfold).
+// Fetched verbatim, byte-identical to the original (see fixtures/DNA_slice2.c).
+// Four near-identical dihedral-angle functions (PCPC/CPCP/CPCN/NCPC). Naively,
+// you'd expect them all to share one guard pattern -- and three of them do
+// (`if(i1+2>L0_chain[jc])`), with CPCN guarding the opposite end (`if(i1-4<0)`)
+// because it reaches backward instead of forward.
+//
+// The actual, VERIFIED bug: CPCP's body reads as far as `x1[jc][i1+4]` (see the
+// p1/p2/p3/g1/g2/g3 lines), but its guard only checks `i1+2>L0_chain[jc]` -- two
+// elements short of what it actually accesses. The other three functions guard
+// correctly for what THEY access. Copying any sibling's guard verbatim (the
+// "obvious" pattern-match) produces the WRONG fix here -- you have to read which
+// index CPCP actually reaches and guard THAT. This is a harder, more honest test
+// than dna-guard: it punishes confident pattern-matching, not just carelessness.
+const DNA_BOUND_FILE = 'DNA.c';
+const DNA_BOUND_SOURCE = "float PCPC(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])\n{\n float c1,c2,c3,p1,p2,p3,e1,f1,pp1,g1,g2,g3,gg1,hh1,di,ud0=0.0;\n if(i1+2>L0_chain[jc]) ud0=0.0;\n else  {\n c1=((y1[jc][i1-2]-y1[jc][i1-1])*(z1[jc][i1-1]-z1[jc][i1+1])-(z1[jc][i1-2]-z1[jc][i1-1])*(y1[jc][i1-1]-y1[jc][i1+1]));\n c2=((z1[jc][i1-2]-z1[jc][i1-1])*(x1[jc][i1-1]-x1[jc][i1+1])-(x1[jc][i1-2]-x1[jc][i1-1])*(z1[jc][i1-1]-z1[jc][i1+1]));\n c3=((x1[jc][i1-2]-x1[jc][i1-1])*(y1[jc][i1-1]-y1[jc][i1+1])-(y1[jc][i1-2]-y1[jc][i1-1])*(x1[jc][i1-1]-x1[jc][i1+1]));\n p1=((y1[jc][i1-1]-y1[jc][i1+1])*(z1[jc][i1+1]-z1[jc][i1+2])-(z1[jc][i1-1]-z1[jc][i1+1])*(y1[jc][i1+1]-y1[jc][i1+2]));\n p2=((z1[jc][i1-1]-z1[jc][i1+1])*(x1[jc][i1+1]-x1[jc][i1+2])-(x1[jc][i1-1]-x1[jc][i1+1])*(z1[jc][i1+1]-z1[jc][i1+2]));\n p3=((x1[jc][i1-1]-x1[jc][i1+1])*(y1[jc][i1+1]-y1[jc][i1+2])-(y1[jc][i1-1]-y1[jc][i1+1])*(x1[jc][i1+1]-x1[jc][i1+2]));\n e1=sqrt(c1*c1+c2*c2+c3*c3); f1=sqrt(p1*p1+p2*p2+p3*p3);\n pp1=(c1*p1+c2*p2+c3*p3)/(e1*f1);\n g1=(x1[jc][i1-2]-x1[jc][i1+2]); g2=(y1[jc][i1-2]-y1[jc][i1+2]); g3=(z1[jc][i1-2]-z1[jc][i1+2]);\n gg1=sqrt(g1*g1+g2*g2+g3*g3); hh1=(p1*g1+p2*g2+p3*g3)/(f1*gg1);\n if (pp1<=-1.0) {di=-3.14;}\n else if (pp1>=1.0) {di=0.;}\n else if (hh1>=0.) {di=acos(pp1);}\n else {di=-acos(pp1);}\n ud0=kpcpc*((1-cos(di-dpcpc))+0.5*(1-cos(3.*(di-dpcpc)))); }\n return ud0;\n}\nfloat CPCP(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])\n{\n float c1,c2,c3,p1,p2,p3,e1,f1,pp1,g1,g2,g3,gg1,hh1,di,ud0=0.0;\n if(i1+2>L0_chain[jc]) ud0=0.0;\n else  {\n c1=((y1[jc][i1-1]-y1[jc][i1+1])*(z1[jc][i1+1]-z1[jc][i1+2])-(z1[jc][i1-1]-z1[jc][i1+1])*(y1[jc][i1+1]-y1[jc][i1+2]));\n c2=((z1[jc][i1-1]-z1[jc][i1+1])*(x1[jc][i1+1]-x1[jc][i1+2])-(x1[jc][i1-1]-x1[jc][i1+1])*(z1[jc][i1+1]-z1[jc][i1+2]));\n c3=((x1[jc][i1-1]-x1[jc][i1+1])*(y1[jc][i1+1]-y1[jc][i1+2])-(y1[jc][i1-1]-y1[jc][i1+1])*(x1[jc][i1+1]-x1[jc][i1+2]));\n p1=((y1[jc][i1+1]-y1[jc][i1+2])*(z1[jc][i1+2]-z1[jc][i1+4])-(z1[jc][i1+1]-z1[jc][i1+2])*(y1[jc][i1+2]-y1[jc][i1+4]));\n p2=((z1[jc][i1+1]-z1[jc][i1+2])*(x1[jc][i1+2]-x1[jc][i1+4])-(x1[jc][i1+1]-x1[jc][i1+2])*(z1[jc][i1+2]-z1[jc][i1+4]));\n p3=((x1[jc][i1+1]-x1[jc][i1+2])*(y1[jc][i1+2]-y1[jc][i1+4])-(y1[jc][i1+1]-y1[jc][i1+2])*(x1[jc][i1+2]-x1[jc][i1+4]));\n e1=sqrt(c1*c1+c2*c2+c3*c3); f1=sqrt(p1*p1+p2*p2+p3*p3);\n pp1=(c1*p1+c2*p2+c3*p3)/(e1*f1);\n g1=(x1[jc][i1-1]-x1[jc][i1+4]); g2=(y1[jc][i1-1]-y1[jc][i1+4]); g3=(z1[jc][i1-1]-z1[jc][i1+4]);\n gg1=sqrt(g1*g1+g2*g2+g3*g3); hh1=(p1*g1+p2*g2+p3*g3)/(f1*gg1);\n if (pp1<=-1.0) {di=-3.14;}\n else if (pp1>=1.0) {di=0.;}\n else if (hh1>=0.) {di=acos(pp1);}\n else {di=-acos(pp1);}\n ud0=kcpcp*((1-cos(di-dcpcp))+0.5*(1-cos(3.*(di-dcpcp))));  }\n return ud0;\n}\nfloat CPCN(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])\n{\n float c1,c2,c3,p1,p2,p3,e1,f1,pp1,g1,g2,g3,gg1,hh1,di,ud0=0.0;\n if(i1-4<0) ud0=0.0;\n else  {\n c1=((y1[jc][i1-4]-y1[jc][i1-2])*(z1[jc][i1-2]-z1[jc][i1-1])-(z1[jc][i1-4]-z1[jc][i1-2])*(y1[jc][i1-2]-y1[jc][i1-1]));\n c2=((z1[jc][i1-4]-z1[jc][i1-2])*(x1[jc][i1-2]-x1[jc][i1-1])-(x1[jc][i1-4]-x1[jc][i1-2])*(z1[jc][i1-2]-z1[jc][i1-1]));\n c3=((x1[jc][i1-4]-x1[jc][i1-2])*(y1[jc][i1-2]-y1[jc][i1-1])-(y1[jc][i1-4]-y1[jc][i1-2])*(x1[jc][i1-2]-x1[jc][i1-1]));\n p1=((y1[jc][i1-2]-y1[jc][i1-1])*(z1[jc][i1-1]-z1[jc][i1])-(z1[jc][i1-2]-z1[jc][i1-1])*(y1[jc][i1-1]-y1[jc][i1]));\n p2=((z1[jc][i1-2]-z1[jc][i1-1])*(x1[jc][i1-1]-x1[jc][i1])-(x1[jc][i1-2]-x1[jc][i1-1])*(z1[jc][i1-1]-z1[jc][i1]));\n p3=((x1[jc][i1-2]-x1[jc][i1-1])*(y1[jc][i1-1]-y1[jc][i1])-(y1[jc][i1-2]-y1[jc][i1-1])*(x1[jc][i1-1]-x1[jc][i1]));\n e1=sqrt(c1*c1+c2*c2+c3*c3); f1=sqrt(p1*p1+p2*p2+p3*p3);\n pp1=(c1*p1+c2*p2+c3*p3)/(e1*f1);\n g1=(x1[jc][i1-4]-x1[jc][i1]); g2=(y1[jc][i1-4]-y1[jc][i1]); g3=(z1[jc][i1-4]-z1[jc][i1]);\n gg1=sqrt(g1*g1+g2*g2+g3*g3); hh1=(p1*g1+p2*g2+p3*g3)/(f1*gg1);\n if (pp1<=-1.0) {di=-3.14;}\n else if (pp1>=1.0) {di=0.;}\n else if (hh1>=0.) {di=acos(pp1);}\n else {di=-acos(pp1);}\n ud0=kcpcN*((1-cos(di-dcpcN))+0.5*(1-cos(3.*(di-dcpcN)))); }\n return ud0;\n}\nfloat NCPC(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])\n{\n float c1,c2,c3,p1,p2,p3,e1,f1,pp1,g1,g2,g3,gg1,hh1,di,ud0=0.0;\n if(i1+2>L0_chain[jc]) ud0=0.0;\n else  {\n c1=((y1[jc][i1]-y1[jc][i1-1])*(z1[jc][i1-1]-z1[jc][i1+1])-(z1[jc][i1]-z1[jc][i1-1])*(y1[jc][i1-1]-y1[jc][i1+1]));\n c2=((z1[jc][i1]-z1[jc][i1-1])*(x1[jc][i1-1]-x1[jc][i1+1])-(x1[jc][i1]-x1[jc][i1-1])*(z1[jc][i1-1]-z1[jc][i1+1]));\n c3=((x1[jc][i1]-x1[jc][i1-1])*(y1[jc][i1-1]-y1[jc][i1+1])-(y1[jc][i1]-y1[jc][i1-1])*(x1[jc][i1-1]-x1[jc][i1+1]));\n p1=((y1[jc][i1-1]-y1[jc][i1+1])*(z1[jc][i1+1]-z1[jc][i1+2])-(z1[jc][i1-1]-z1[jc][i1+1])*(y1[jc][i1+1]-y1[jc][i1+2]));\n p2=((z1[jc][i1-1]-z1[jc][i1+1])*(x1[jc][i1+1]-x1[jc][i1+2])-(x1[jc][i1-1]-x1[jc][i1+1])*(z1[jc][i1+1]-z1[jc][i1+2]));\n p3=((x1[jc][i1-1]-x1[jc][i1+1])*(y1[jc][i1+1]-y1[jc][i1+2])-(y1[jc][i1-1]-y1[jc][i1+1])*(x1[jc][i1+1]-x1[jc][i1+2]));\n e1=sqrt(c1*c1+c2*c2+c3*c3);\n f1=sqrt(p1*p1+p2*p2+p3*p3);\n pp1=(c1*p1+c2*p2+c3*p3)/(e1*f1);\n g1=(x1[jc][i1]-x1[jc][i1+2]); g2=(y1[jc][i1]-y1[jc][i1+2]); g3=(z1[jc][i1]-z1[jc][i1+2]);\n gg1=sqrt(g1*g1+g2*g2+g3*g3); hh1=(p1*g1+p2*g2+p3*g3)/(f1*gg1);\n if (pp1<=-1.0) {di=-3.14;}\n else if (pp1>=1.0) {di=0.;}\n else if (hh1>=0.) {di=acos(pp1);}\n else {di=-acos(pp1);}\n ud0=kNcpc*((1-cos(di-dNcpc))+0.5*(1-cos(3.*(di-dNcpc)))); }\n return ud0;\n}\n";
+
+const DNA_BOUND_TASK =
+  'In this file, four functions (PCPC, CPCP, CPCN, NCPC) guard against reading ' +
+  'past the end of the chain before doing their distance calculations. Three of ' +
+  'them check `i1+2>L0_chain[jc]` and one (CPCN) checks `i1-4<0` because it reads ' +
+  'backward instead of forward -- both are correct for what each function reads. ' +
+  'BUT: `CPCP`\'s guard checks `i1+2>L0_chain[jc]`, while its body actually reads ' +
+  'as far as `x1[jc][i1+4]` (see the p1/p2/p3/g1/g2/g3 lines) -- the guard is two ' +
+  'elements short of what the function actually accesses, so it can still read ' +
+  'out of bounds near a chain boundary even when the guard passes. Fix ONLY the ' +
+  'guard condition in `CPCP` so it correctly covers the farthest index it reads ' +
+  '(`i1+4`), Do not copy another function\'s guard verbatim -- the other three ' +
+  'guard a different reach than CPCP does. Only touch CPCP -- do not modify ' +
+  'PCPC, CPCN, or NCPC.';
+
+// The real, current CPCP function pulled out of the actual fixture text.
+function cpcpOldBlock(source) {
+  const start = source.indexOf('float CPCP(');
+  const end = source.indexOf('\nfloat CPCN(', start);
+  return source.slice(start, end);
+}
+
+// The correct fix: tighten the guard from i1+2 to i1+4 -- nothing else changes.
+function buildDnaBoundCorrectCpcp(source) {
+  return cpcpOldBlock(source).replace('if(i1+2>L0_chain[jc])', 'if(i1+4>L0_chain[jc])');
+}
+
+// A representative "no skill" failure: pattern-matches the MAJORITY guard
+// (i1+2, seen on PCPC/NCPC) instead of reading what CPCP itself accesses. This
+// is a realistic, plausible mistake -- not a strawman -- because three of the
+// four sibling functions really do share that exact guard. It also shows the
+// failure mode dna-guard couldn't: this answer IS applyable, correctness-wise
+// it changes the RIGHT function, but the value it lands is WRONG (a no-op,
+// since CPCP already had i1+2 -- the bug survives untouched).
+function buildDnaBoundBaselineWrongFix(source) {
+  const old = cpcpOldBlock(source);
+  // re-asserts the SAME (buggy) guard the model "fixed" nothing about --
+  // a model that pattern-matches the majority sees i1+2 already there and,
+  // misreading the task, leaves it untouched or re-states it unchanged.
+  const unchanged = old; // identical block: the "fix" is a no-op
+  return [
+    'Looking at the four functions, they should all use the same chain-boundary',
+    'guard. `CPCP` already has `if(i1+2>L0_chain[jc])`, matching `PCPC` and',
+    '`NCPC`, so it looks consistent with its siblings:',
+    '',
+    '```c',
+    unchanged,
+    '```',
+    '',
+    'This matches the pattern used elsewhere in the file, so no change is needed.',
+  ].join('\n');
+}
+
+function buildDnaBoundDemo(source) {
+  const correct = buildDnaBoundCorrectCpcp(source);
+  return {
+    viceroy: [
+      'In `DNA.c`, replace this:',
+      '',
+      '```c',
+      cpcpOldBlock(source),
+      '```',
+      '',
+      'with this:',
+      '',
+      '```c',
+      correct,
+      '```',
+    ].join('\n'),
+    baseline: buildDnaBoundBaselineWrongFix(source),
+  };
+}
+
 // --- task registry ------------------------------------------------------------
 const TASKS = {
   'cache-fn': {
@@ -217,6 +309,19 @@ const TASKS = {
     // tasks; cache-fn (Python) reports applyability only -- the function
     // splitter is C-specific and cache-fn is the throwaway sanity task anyway.
     blast: { targetFn: 'PCN', requiredToken: 'i1+2>N0' },
+    // reader-load config: the correct edit content the reader must end up with.
+    // cognitive-load measures how much of THIS the instruction hands over vs
+    // leaves the reader to reconstruct. Reusing the known-correct guarded PCN.
+    targetEdit: DNA_GUARD_DEMO_VICEROY_NEW,
+  },
+  'dna-bound': {
+    file: DNA_BOUND_FILE,
+    source: DNA_BOUND_SOURCE,
+    task: DNA_BOUND_TASK,
+    demo: buildDnaBoundDemo(DNA_BOUND_SOURCE),
+    note: 'real, unmodified 89-line C slice, SAME file as dna-guard but a different bug shape -- punishes pattern-matching the majority guard instead of reading what the buggy function actually accesses',
+    blast: { targetFn: 'CPCP', requiredToken: 'i1+4>L0_chain' },
+    targetEdit: buildDnaBoundCorrectCpcp(DNA_BOUND_SOURCE),
   },
 };
 
@@ -326,9 +431,22 @@ function printRun({ taskId, arm, answer, scored }, model, demo) {
     const br = analyze(answer, t.source, t.blast);
     console.log('--- correctness (beyond applyability) ' + '-'.repeat(19));
     console.log('answer shape       : ' + br.shape + (br.shape === 'prose' ? '  (described, never delivered)' : ''));
-    console.log('task done          : ' + (br.taskDone ? 'YES \u2714  (guard landed in ' + t.blast.targetFn + ')' : 'NO \u2718  (' + t.blast.targetFn + (br.targetPresent ? ' present but guard absent' : ' missing entirely') + ')'));
+    console.log('task done          : ' + (br.taskDone ? 'YES \u2714  (guard landed in ' + t.blast.targetFn + ')' : 'NO \u2718  (' + t.blast.targetFn + (br.shape === 'prose' ? ' was described but never delivered' : br.targetPresent ? ' present but guard absent' : ' missing entirely') + ')'));
     console.log('collateral damage  : ' + (br.noCollateral ? 'none \u2714  (untouched functions left alone)' : 'YES \u2718  changed=' + (br.changed.join('/') || 'none') + ' deleted=' + (br.missing.join('/') || 'none')));
     console.log('overall            : ' + (scored.applyable && br.taskDone && br.noCollateral ? 'PASS \u2714  (applyable AND correct AND surgical)' : 'FAIL \u2718  (an applyable edit is not automatically a good one)'));
+    console.log('-'.repeat(57) + '\n');
+  }
+
+  // The third axis: what the instruction costs the READER. Measures how much of
+  // the correct edit this answer hands over vs leaves the reader to reconstruct
+  // -- deterministic (gzip-NCD + verbatim coverage), the metric for Viceroy's
+  // actual claim (specificity), not just whether the output was sound.
+  if (t.targetEdit) {
+    const rl = readerLoad(answer, t.targetEdit);
+    console.log('--- reader load (the cost to the human) ' + '-'.repeat(17));
+    console.log('info-distance to edit : ' + rl.ncd.toFixed(3) + '  (lower = instruction is closer to the actual change)');
+    console.log('handed over verbatim  : ' + (rl.coverage * 100).toFixed(0) + '%');
+    console.log('reader reconstructs   : ' + (rl.reconstruct * 100).toFixed(0) + '%  (lower = less cognitive work)');
     console.log('-'.repeat(57) + '\n');
   }
 
@@ -353,8 +471,8 @@ async function runCompare(taskIds, model, demo, runs) {
     console.log('mode  : ' + (demo ? '--demo (no model, baked-in answers \u2014 same answer every run)' : 'Ollama model "' + model + '"') + '\n');
 
     const tally = {
-      viceroy: { apply: 0, done: 0, clean: 0, total: 0 },
-      baseline: { apply: 0, done: 0, clean: 0, total: 0 },
+      viceroy: { apply: 0, done: 0, clean: 0, total: 0, reconSum: 0, ncdSum: 0 },
+      baseline: { apply: 0, done: 0, clean: 0, total: 0, reconSum: 0, ncdSum: 0 },
     };
     for (const arm of ['viceroy', 'baseline']) {
       for (let i = 0; i < runs; i += 1) {
@@ -371,6 +489,12 @@ async function runCompare(taskIds, model, demo, runs) {
             + ', collateral=' + (br.collateral.length ? br.collateral.join('/') : 'none')
             + (br.missing.length ? ', deleted=' + br.missing.join('/') : '')
             + ']';
+        }
+        if (t.targetEdit) {
+          const rl = readerLoad(answer, t.targetEdit);
+          tally[arm].reconSum += rl.reconstruct;
+          tally[arm].ncdSum += rl.ncd;
+          extra += '  reader-reconstructs=' + (rl.reconstruct * 100).toFixed(0) + '%';
         }
         const tag = scored.applyable ? 'APPLIES' : 'NOT APPLYABLE';
         console.log('  [' + arm.padEnd(8) + '] run ' + (i + 1) + '/' + runs + ': ' + tag + extra);
@@ -393,6 +517,12 @@ async function runCompare(taskIds, model, demo, runs) {
       console.log('\n  applyable   = drops in clean (no elision / swap is unique). Necessary, not sufficient.');
       console.log('  task-done   = the requested change actually landed in the target function.');
       console.log('  collateral-free = no OTHER function was changed or deleted (the Viceroy-shaped metric).');
+      if (t.targetEdit) {
+        const avg = (arm) => tally[arm].total ? Math.round((100 * tally[arm].reconSum) / tally[arm].total) : 0;
+        console.log('\n  reader-reconstructs (avg): viceroy ' + avg('viceroy') + '%   baseline ' + avg('baseline') + '%');
+        console.log('  = how much of the correct edit the instruction left the HUMAN to rebuild');
+        console.log('    (deterministic gzip-NCD + verbatim coverage; lower = less cognitive load). Viceroy\u2019s actual claim.');
+      }
     } else {
       console.log('  arm        apply-rate');
       for (const arm of ['viceroy', 'baseline']) {
@@ -403,6 +533,44 @@ async function runCompare(taskIds, model, demo, runs) {
       console.log('  (applyability only -- this task carries no blast-radius config)');
     }
     console.log('');
+  }
+
+  // Cross-task aggregate: the actual "multi-task benchmark" headline. Only
+  // rolls up tasks that carry real scoring config (blast-radius + targetEdit) --
+  // cache-fn is the throwaway sanity task and is excluded so it can't dilute
+  // the real signal with its by-design null result.
+  const realTaskIds = taskIds.filter((id) => TASKS[id].blast && TASKS[id].targetEdit);
+  if (realTaskIds.length > 1) {
+    console.log('='.repeat(57));
+    console.log('AGGREGATE across ' + realTaskIds.length + ' real tasks (' + realTaskIds.join(', ') + '), n=' + runs + ' each\n');
+    const agg = {
+      viceroy: { apply: 0, done: 0, clean: 0, total: 0, reconSum: 0 },
+      baseline: { apply: 0, done: 0, clean: 0, total: 0, reconSum: 0 },
+    };
+    for (const id of realTaskIds) {
+      for (const arm of ['viceroy', 'baseline']) {
+        const t = allTallies[id][arm];
+        agg[arm].apply += t.apply;
+        agg[arm].done += t.done;
+        agg[arm].clean += t.clean;
+        agg[arm].total += t.total;
+        agg[arm].reconSum += t.reconSum;
+      }
+    }
+    console.log('  arm        applyable   task-done   collateral-free   reader-reconstructs');
+    for (const arm of ['viceroy', 'baseline']) {
+      const { apply, done, clean, total, reconSum } = agg[arm];
+      const pc = (n) => (total ? Math.round((100 * n) / total) : 0) + '%';
+      console.log('  ' + arm.padEnd(10)
+        + ' ' + (apply + '/' + total + ' (' + pc(apply) + ')').padEnd(11)
+        + ' ' + (done + '/' + total + ' (' + pc(done) + ')').padEnd(11)
+        + ' ' + (clean + '/' + total + ' (' + pc(clean) + ')').padEnd(17)
+        + ' ' + (total ? Math.round((100 * reconSum) / total) : 0) + '%');
+    }
+    console.log('\n  This is pooled across DIFFERENT bug shapes (deletion+corruption risk in dna-guard,');
+    console.log('  wrong-target pattern-matching risk in dna-bound) -- a result that holds across both');
+    console.log("  is a real signal, not one task's lucky framing.");
+    console.log('='.repeat(57));
   }
 
   console.log('-'.repeat(57));
