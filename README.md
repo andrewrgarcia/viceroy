@@ -82,37 +82,52 @@ $ node benchmarks/applyability.js --selftest
 ok  verbatim unique old block APPLIES
 ok  paraphrased old block is caught (count 0)
 ok  non-unique old block is caught as ambiguous (count 2)
-ok  comment ellipsis "// ... rest" is caught
-ok  keyword elision "# existing code here" is caught
+ok  bare "..." as a Python stub body is caught with no comment marker
+ok  generalized "existing <words> goes here" placeholder is caught
+ok  an ordinary comment ending in "here" with no elision intent passes
 ok  an answer whose old block does not match the file scores NOT applyable
 ...
-self-test: 14 passed, 0 failed -- all instruments valid
+self-test: 20 passed, 0 failed -- all instruments valid
 ```
 
 ## What's measured so far
 
-Honest and small, on purpose — this is one live result, not a benchmark yet, and it's labeled that way until there's an `n` worth quoting.
+Honest and small, on purpose. This has gone through two rounds already, and both are kept visible rather than smoothed over.
 
-**Setup.** `benchmarks/agentic/mini-agent.js` runs one real pass of the loop: a 10-line seeded `service.py`, a real task ("add caching to `fetch_user`, behavior identical otherwise"), a free local model via [Ollama](https://ollama.com), the Viceroy skill as the system prompt. The model's answer is scored by the same deterministic checker above — not eyeballed.
+**Round 1 — proving the wiring (n=1).** `benchmarks/agentic/mini-agent.js` runs one real pass of the loop: a seeded file, a real task, a free local model via [Ollama](https://ollama.com), the Viceroy skill as the system prompt, scored by the deterministic checker above — not eyeballed. First result, `qwen2.5-coder` (7.6B, Q4_K_M), n=1: one exact swap, verbatim and unique, applied cleanly. That proved the loop works end to end, on real hardware, for $0. It did not prove anything about Viceroy's *effect*, because there was no baseline to compare against yet.
 
-**Result, 2026-06-20, `qwen2.5-coder` (7.6B, Q4_K_M), n=1:**
+**Round 2 — the comparison, and a null result (n=10).** A `baseline` arm was added (same task, same model, no Viceroy skill — just "you are a helpful coding assistant"). Running both arms 10 times each on the original trivial task:
 
-| | |
-|---|---|
-| model | qwen2.5-coder:latest, local via Ollama |
-| task | add caching to `fetch_user`, behavior unchanged |
-| swaps emitted | 1 |
-| applies? | **yes** — verbatim, unique match |
-| cost | $0 (local model) |
+```
+arm        apply-rate
+viceroy    10/10  (100%)
+baseline   10/10  (100%)
+```
 
-The model returned one exact swap. Its "old block" matched the seeded file character-for-character, so it applied cleanly and the patched file was produced automatically. Reproduce it yourself:
+Both arms hit 100%. That is a real finding about the *task*, not a disappointing result to bury: a 10-line file with one obvious edit site has nowhere to get lost, so even a generic prompt finds it without help. The task wasn't stressing the actual claim — Viceroy's value is in long, messy files where "where does this go" is genuinely hard, and a 10-line file can't test that.
+
+**Round 3 — a real-world fixture (`dna-guard`).** In response, a second task was added using a byte-exact, unmodified 77-line slice of real published code: [`RNA-folding-lab/DNAfold`](https://github.com/RNA-folding-lab/DNAfold)'s `DNA.c`, a scientific C simulation with one-letter variable names and several near-identical sibling functions (`PC`/`CP`/`CN`, `PCP`/`CPC`/`PCN`/`NCP` — same shape, different constants). The task: one sibling (`PCN`) is missing a bounds guard another sibling (`CPC`) already has; add the matching guard, touch nothing else. That is the regime "verbatim and unique" actually has to work in. Provenance and the exact extraction command: `benchmarks/agentic/fixtures/PROVENANCE.md`.
+
+**Round 4 — applyability is necessary, not sufficient.** Running `dna-guard` with `qwen2.5-coder` produced *another* 100%/100% null on apply-rate — but inspecting the raw baseline output showed why, and it was not "the skill doesn't matter." The baseline returned the whole file, which dropped in cleanly (no elision) and so scored applyable — while having **silently deleted the target function `PCN` entirely and corrupted a neighbor (`CPC`)**, never adding the guard. It passed the delivery check for the wrong reason. That is exactly ponytail's issue #126 in mirror image: a single metric can be gamed by an answer that doesn't do the work. The fix is a second deterministic instrument, `benchmarks/blast-radius.js`, that measures the two things applyability is blind to — **task completion** (did the change actually land in the target?) and **collateral damage** (were functions the task said not to touch left byte-identical?) — and reports them as separate axes. Win condition is all three. On the demo data the split is immediate:
+
+```
+arm        applyable   task-done   collateral-free
+viceroy    100%        100%        100%
+baseline   100%          0%          0%
+```
+
+The honest division of labor: *task-done* mostly reflects the model's coding ability, while *collateral-free* is the genuinely Viceroy-attributable axis — a surgical swap of `PCN` **cannot** corrupt `CPC`, because it never reproduces `CPC`; the baseline's whole-file rewrite had 77 lines of opportunity to break things and took it. Both `blast-radius.js` and the original checker run with `--selftest`, no API, no cost; `blast-radius`'s self-test includes qwen's *actual* captured failure as a pinned regression so this exact gaming case can never silently pass again.
+
+Reproduce any of this yourself, for $0:
 
 ```bash
 ollama pull qwen2.5-coder
-cd benchmarks/agentic && node mini-agent.js --model qwen2.5-coder
+cd benchmarks/agentic
+node mini-agent.js --model qwen2.5-coder --task dna-guard --compare --runs 10
+node mini-agent.js --model qwen2.5-coder --task all --compare --runs 10   # both tasks
 ```
 
-**What this is not, yet:** a comparison. There's no baseline arm (the same task with no Viceroy skill in the prompt) and no `n` large enough to call a rate. Both are next — see [Roadmap](#roadmap). A real headline number needs: multiple seeded tasks, many runs each, a no-skill baseline, and ideally a bigger/more capable model alongside the free local one. Until that exists, this README will keep showing the real, current, small result instead of a placeholder table.
+**What this is not, yet:** a benchmark with real statistical weight. Two tasks and `n=10` is a start, not a headline number — see [Roadmap](#roadmap). A real number needs several more tasks of this difficulty, more runs, and ideally a bigger model alongside the free local one. Until that exists, this README keeps showing the real, current, small results — including the null ones and the reasons behind them — instead of a polished table.
 
 ## How it works
 
@@ -156,10 +171,11 @@ Modes: `/viceroy auto` (default, judges whole-vs-swap per change), `/viceroy who
 
 - [x] Core skill (the philosophy: applyable delivery + tidier seams + lead with the tree)
 - [x] Always-on adapters for instruction-only hosts (`AGENTS.md` + four editors)
-- [x] Deterministic applyability instrument + self-test (no API, no cost)
-- [x] One real agentic pass, free local model, scored end to end (n=1, above)
-- [ ] No-skill baseline arm — the comparison number that makes the metric mean something
-- [ ] Multi-task benchmark: several seeded files/tasks, many runs each, aggregated apply-rate
+- [x] Deterministic applyability instrument + self-test (no API, no cost) — 20 cases, two real bugs caught and fixed along the way (a bare `...` stub body and a too-narrow elision-keyword match both slipped through before being caught and pinned as regression tests)
+- [x] No-skill baseline arm — wired and proven (viceroy 100% / baseline 0% once both demo data and the checker were correct)
+- [x] A real-world fixture task (`dna-guard`): a byte-exact, unmodified slice of published scientific C, chosen specifically to stress "find the right spot among near-duplicates"
+- [x] Second deterministic gate (`blast-radius.js`): task-completion + collateral-damage, because applyability alone can be gamed by a whole-file dump that does nothing (23 self-tests, incl. qwen's real captured failure pinned)
+- [ ] Multi-task benchmark: several more tasks at this difficulty, many runs each, aggregated across all three axes with real statistical weight
 - [ ] Seam-quality judge for the "tidier on the way out" law (extraction quality, behavior preserved)
 - [ ] Full plugin adapters with mode switching (Claude Code / Codex / OpenCode) and a `check-rule-copies` alignment script
 - [ ] `/viceroy-review` companion: scan a diff for un-applyable or elided edits

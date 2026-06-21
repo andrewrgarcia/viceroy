@@ -54,7 +54,7 @@ function checkSwapApplies(source, oldBlock) {
 // keyword. Requiring comment context keeps legitimate prose/strings from
 // tripping it (e.g. a docstring that says "unchanged" in a sentence).
 const COMMENT = String.raw`(?://|#|--|;|\*|<!--)`;
-const ELISION_KEYWORDS = String.raw`rest of|existing code|unchanged|remains the same|stays the same|same as (?:before|above)|omitted|snip|keep (?:the )?(?:existing|rest)|other (?:code|methods|functions)|continues|as before|previous|… ?rest`;
+const ELISION_KEYWORDS = String.raw`rest of|existing \w+(?: \w+){0,2}|unchanged|remains the same|stays the same|same as (?:before|above)|omitted|snip|keep (?:the )?(?:existing|rest)|other (?:code|methods|functions)|continues|as before|previous|… ?rest|goes here`;
 
 const ELISION_PATTERNS = [
   // comment that is just an ellipsis: `// ...`, `# ...`, `/* ... */`, `<!-- ... -->`
@@ -65,6 +65,14 @@ const ELISION_PATTERNS = [
   new RegExp(String.raw`^\s*${COMMENT}.*(?:${ELISION_KEYWORDS}).*$`, 'i'),
   // ellipsis + keyword on one line even without a comment marker: `... rest unchanged ...`
   new RegExp(String.raw`\.{3}\s*(?:${ELISION_KEYWORDS})`, 'i'),
+  // a BARE ellipsis as a whole statement/body, no comment marker at all:
+  //   `    ...`          (Python stub body)
+  //   `...`              (any language, a line that is only "...")
+  // Deliberately NOT matching ellipses inside a larger expression or string
+  // (e.g. `x = [1, 2, ...]` or a sentence ending in "..."), only a line whose
+  // entire trimmed content is the ellipsis itself -- that is never legitimate
+  // code, only ever a stand-in for "something goes here".
+  /^\s*\.{3}\s*,?\s*$/,
 ];
 
 function findElision(fileText) {
@@ -204,6 +212,39 @@ if (require.main === module && process.argv.includes('--selftest')) {
   ok(!findElision(falsePositive).whole, 'comment containing "unchanged" is flagged (documented conservative bias)');
   const reworded = 'def parse(s):\n    # empty input is returned as-is\n    return s';
   ok(findElision(reworded).whole, '  ...rewording without the keyword passes (the escape hatch exists)');
+
+  // bare ellipsis as a stub body, no comment marker at all -- this is the gap
+  // a representative "no-skill" answer hit in practice (issue: baseline demo
+  // answer with a `...` function body scored APPLYABLE before this fix).
+  const bareEllipsisBody = 'def fetch_user(user_id):\n    ...';
+  ok(!findElision(bareEllipsisBody).whole, 'bare "..." as a Python stub body is caught with no comment marker');
+
+  const bareEllipsisTrailingComma = '    x = 1\n    ...,\n    y = 2';
+  ok(!findElision(bareEllipsisTrailingComma).whole, 'bare "...," on its own line is caught');
+
+  const ellipsisInsideExpression = 'x = [1, 2, ...]\nreturn x';
+  ok(findElision(ellipsisInsideExpression).whole, 'an ellipsis INSIDE an expression/list literal is not a false positive');
+
+  const sentenceEndingInDots = 'def f(x):\n    # this function keeps growing...\n    return x';
+  // Already caught by the existing "comment + ellipsis" pattern -- confirms the
+  // new bare-line pattern didn't change that prior (intentionally conservative) behavior.
+  ok(!findElision(sentenceEndingInDots).whole, 'a comment trailing off in "..." is still caught (prior behavior preserved)');
+
+  // generalized "existing X goes here" -- the literal-phrase keyword list missed
+  // this in practice: a real "no-skill" baseline answer wrote "existing distance
+  // calculation goes here" inside a fenced snippet, and the OLD keyword list
+  // (which only matched the exact phrase "existing code") let it through as
+  // APPLYABLE. Caught here so this exact regression can't silently recur.
+  const placeholderVariant = '// existing distance calculation goes here';
+  ok(!findElision(placeholderVariant).whole, 'generalized "existing <words> goes here" placeholder is caught');
+
+  // guard against the obvious over-broad fix: a comment that legitimately ends
+  // in the word "here" with no elision intent must NOT be flagged. An earlier
+  // draft of the fix above used a bare end-of-line "here" pattern and it WAS
+  // flagging ordinary comments like this one -- pinned so that regression can't
+  // come back either.
+  const legitimateHere = '// the off-by-one error was triggered here';
+  ok(findElision(legitimateHere).whole, 'an ordinary comment ending in "here" with no elision intent passes');
 
   // --- end-to-end answer scoring ---
   const ANSWER = [

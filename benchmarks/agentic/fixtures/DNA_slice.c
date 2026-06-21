@@ -1,0 +1,77 @@
+/* ~~~~~~~~~~ Details of bonded potential calculation ~~~~~~~~~~~~~~ */
+float PC(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d,ul;
+ d=sqrt((x1[jc][i1-2]-x1[jc][i1-1])*(x1[jc][i1-2]-x1[jc][i1-1])+(y1[jc][i1-2]-y1[jc][i1-1])*(y1[jc][i1-2]-y1[jc][i1-1])+(z1[jc][i1-2]-z1[jc][i1-1])*(z1[jc][i1-2]-z1[jc][i1-1]));
+ ul=kpc*(d-lpc)*(d-lpc);
+ return ul;
+}
+float CP(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d,ul;
+ d=sqrt((x1[jc][i1+1]-x1[jc][i1-1])*(x1[jc][i1+1]-x1[jc][i1-1])+(y1[jc][i1+1]-y1[jc][i1-1])*(y1[jc][i1+1]-y1[jc][i1-1])+(z1[jc][i1+1]-z1[jc][i1-1])*(z1[jc][i1+1]-z1[jc][i1-1]));
+ ul=kcp*(d-lcp)*(d-lcp);
+ return ul;
+}
+float CN(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d,ul;
+ d=sqrt((x1[jc][i1]-x1[jc][i1-1])*(x1[jc][i1]-x1[jc][i1-1])+(y1[jc][i1]-y1[jc][i1-1])*(y1[jc][i1]-y1[jc][i1-1])+(z1[jc][i1]-z1[jc][i1-1])*(z1[jc][i1]-z1[jc][i1-1]));
+ ul=kcN*(d-lcN)*(d-lcN);
+ return ul;
+}
+float PCP(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d1,d2,d3,w,a1,ue0;
+ d1=sqrt((x1[jc][i1-2]-x1[jc][i1-1])*(x1[jc][i1-2]-x1[jc][i1-1])+(y1[jc][i1-2]-y1[jc][i1-1])*(y1[jc][i1-2]-y1[jc][i1-1])+(z1[jc][i1-2]-z1[jc][i1-1])*(z1[jc][i1-2]-z1[jc][i1-1]));
+ d2=sqrt((x1[jc][i1-1]-x1[jc][i1+1])*(x1[jc][i1-1]-x1[jc][i1+1])+(y1[jc][i1-1]-y1[jc][i1+1])*(y1[jc][i1-1]-y1[jc][i1+1])+(z1[jc][i1-1]-z1[jc][i1+1])*(z1[jc][i1-1]-z1[jc][i1+1]));
+ d3=sqrt((x1[jc][i1+1]-x1[jc][i1-2])*(x1[jc][i1+1]-x1[jc][i1-2])+(y1[jc][i1+1]-y1[jc][i1-2])*(y1[jc][i1+1]-y1[jc][i1-2])+(z1[jc][i1+1]-z1[jc][i1-2])*(z1[jc][i1+1]-z1[jc][i1-2]));
+ w=(d1*d1+d2*d2-d3*d3)/(2.0*d1*d2);
+ if (w<=-1.0) {a1=3.14;}
+ else if (w>=1.0) {a1=0.;}
+ else  {a1=acos(w);}
+ ue0=kpcp*(a1-Apcp)*(a1-Apcp);  
+ return ue0;
+}
+float CPC(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d1,d2,d3,w,a1,ue0;
+ if(i1+2>N0)  ue0=0.0;
+ else {
+ d1=sqrt((x1[jc][i1-1]-x1[jc][i1+1])*(x1[jc][i1-1]-x1[jc][i1+1])+(y1[jc][i1-1]-y1[jc][i1+1])*(y1[jc][i1-1]-y1[jc][i1+1])+(z1[jc][i1-1]-z1[jc][i1+1])*(z1[jc][i1-1]-z1[jc][i1+1]));
+ d2=sqrt((x1[jc][i1+1]-x1[jc][i1+2])*(x1[jc][i1+1]-x1[jc][i1+2])+(y1[jc][i1+1]-y1[jc][i1+2])*(y1[jc][i1+1]-y1[jc][i1+2])+(z1[jc][i1+1]-z1[jc][i1+2])*(z1[jc][i1+1]-z1[jc][i1+2]));
+ d3=sqrt((x1[jc][i1+2]-x1[jc][i1-1])*(x1[jc][i1+2]-x1[jc][i1-1])+(y1[jc][i1+2]-y1[jc][i1-1])*(y1[jc][i1+2]-y1[jc][i1-1])+(z1[jc][i1+2]-z1[jc][i1-1])*(z1[jc][i1+2]-z1[jc][i1-1]));
+ w=(d1*d1+d2*d2-d3*d3)/(2.0*d1*d2);
+ if (w<=-1.0) {a1=3.14;}
+ else if (w>=1.0) {a1=0.;}
+ else  {a1=acos(w);}
+ ue0=kcpc*(a1-Acpc)*(a1-Acpc);  
+ } 
+ return ue0;
+}
+float PCN(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d1,d2,d3,w,a1,ue0;
+ d1=sqrt((x1[jc][i1-1]-x1[jc][i1-2])*(x1[jc][i1-1]-x1[jc][i1-2])+(y1[jc][i1-1]-y1[jc][i1-2])*(y1[jc][i1-1]-y1[jc][i1-2])+(z1[jc][i1-1]-z1[jc][i1-2])*(z1[jc][i1-1]-z1[jc][i1-2]));
+ d2=sqrt((x1[jc][i1-1]-x1[jc][i1])*(x1[jc][i1-1]-x1[jc][i1])+(y1[jc][i1-1]-y1[jc][i1])*(y1[jc][i1-1]-y1[jc][i1])+(z1[jc][i1-1]-z1[jc][i1])*(z1[jc][i1-1]-z1[jc][i1]));
+ d3=sqrt((x1[jc][i1-2]-x1[jc][i1])*(x1[jc][i1-2]-x1[jc][i1])+(y1[jc][i1-2]-y1[jc][i1])*(y1[jc][i1-2]-y1[jc][i1])+(z1[jc][i1-2]-z1[jc][i1])*(z1[jc][i1-2]-z1[jc][i1]));
+ w=(d1*d1+d2*d2-d3*d3)/(2.0*d1*d2);
+ if (w<=-1.0) {a1=3.14;}
+ else if (w>=1.0) {a1=0.;}
+ else  {a1=acos(w);}
+ ue0=kpcN*(a1-ApcN)*(a1-ApcN);
+ return ue0;
+}
+float NCP(int i1,int jc,float x1[chain_maxsize][max_size],float y1[chain_maxsize][max_size],float z1[chain_maxsize][max_size])
+{
+ float d1,d2,d3,w,a1,ue0;
+ d1=sqrt((x1[jc][i1-1]-x1[jc][i1])*(x1[jc][i1-1]-x1[jc][i1])+(y1[jc][i1-1]-y1[jc][i1])*(y1[jc][i1-1]-y1[jc][i1])+(z1[jc][i1-1]-z1[jc][i1])*(z1[jc][i1-1]-z1[jc][i1]));
+ d2=sqrt((x1[jc][i1-1]-x1[jc][i1+1])*(x1[jc][i1-1]-x1[jc][i1+1])+(y1[jc][i1-1]-y1[jc][i1+1])*(y1[jc][i1-1]-y1[jc][i1+1])+(z1[jc][i1-1]-z1[jc][i1+1])*(z1[jc][i1-1]-z1[jc][i1+1]));
+ d3=sqrt((x1[jc][i1+1]-x1[jc][i1])*(x1[jc][i1+1]-x1[jc][i1])+(y1[jc][i1+1]-y1[jc][i1])*(y1[jc][i1+1]-y1[jc][i1])+(z1[jc][i1+1]-z1[jc][i1])*(z1[jc][i1+1]-z1[jc][i1]));
+ w=(d1*d1+d2*d2-d3*d3)/(2.0*d1*d2);
+ if (w<=-1.0) {a1=3.14;}
+ else if (w>=1.0) {a1=0.;}
+ else  {a1=acos(w);}
+ ue0=kNcp*(a1-ANcp)*(a1-ANcp);
+ return ue0;
+}
