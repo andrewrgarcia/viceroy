@@ -12,15 +12,22 @@
   <strong>Applyable, not abstract · the full file or the exact verbatim swap · monoliths get cleaner where you touch them</strong>
 </p>
 
+<p align="center">
+  <strong>90% task-done vs 0% · 100% collateral-free vs 0% · 0% reader-rebuild vs the baseline's mess</strong><br>
+  <sub>Measured on a real, unmodified slice of published scientific C (DNAfold's <code>DNA.c</code>), same free local model (<code>qwen2.5-coder</code> 7.6B) with and without the Viceroy skill, n=10. On the fix the model is capable of (<code>dna-guard</code>), Viceroy lands a correct, surgical edit 9/10 times with zero collateral damage; the bare baseline deletes the target function and corrupts a neighbor 10/10 while still looking "applyable." On a harder fix the 7.6B model can't even locate (<code>dna-bound</code>), both arms fail — an honest ceiling, confirmed at 14B, reported rather than hidden. Three deterministic instruments, no API, $0. <a href="#whats-measured-so-far">Full writeup</a> · <a href="benchmarks/">reproduce it</a>.</sub>
+</p>
+
 ---
 
-You know the answer that helps nobody: *"Add a try/except around your database call, somewhere near the top of the function, and don't forget to import logging."* Where near the top? Which call? What exactly do I paste, and what do I delete to make room? You are now doing the work the assistant was supposed to do — locating the seam, reconstructing the edit, hoping you put it in the right place.
+You know the answer that helps nobody: *"Add a try/except around your database call, somewhere near the top of the function, and don't forget to import logging."* Where near the top? Which call? What exactly do I paste, and what do I delete to make room? You are now doing the work the assistant was supposed to do; locating the seam, reconstructing the edit, hoping you put it in the right place.
 
-Viceroy is a mental model for an AI coding agent that refuses to do that. Two laws:
+Viceroy is a mental model for an AI coding agent that refuses to do that. Three laws:
 
-1. **Applyable, not abstract.** Every change arrives in a form you can drop in without thinking. If the change is substantial, you get the **whole file**. If it is a small change in a long file, you get an **exact, verbatim block-for-block swap**: *in this file, replace this (copied character-for-character from your current code) with this.* If the change creates files, you get the **directory tree first**, then each file headed by its path. Find it, select it, paste. Never `// ... rest unchanged`. Never "insert this somewhere around line 40." Never a file with no shown home.
+1. **Anchor before you answer.** Before writing a line of the change, find the exact place it lands and *read it*. Name the target — the function, the block — and confirm the fix fits *that* code, not a near-identical sibling two functions up. Most bad edits aren't badly written; they're confidently aimed at the wrong place. You can't be verbatim about text you never looked at.
 
-2. **Tidier on the way out.** When Viceroy has to edit a monolith — a 300-line function, a file doing six jobs — it doesn't avert its eyes and it doesn't stop to rewrite from scratch. It improves *the seam it is already working at*: extracts the obvious unit, names the unnamed thing, leaves a `viceroy:` marker so the next reader sees the boundary. Moderate, behavior-preserving, scoped to the blast radius.
+2. **Applyable, not abstract.** Every change arrives in a form you can drop in without thinking. If the change is substantial, you get the **whole file**. If it is a small change in a long file, you get an **exact, verbatim block-for-block swap**: *in this file, replace this (copied character-for-character from your current code) with this.* If the change creates files, you get the **directory tree first**, then each file headed by its path. Find it, select it, paste. Never `// ... rest unchanged`. Never "insert this somewhere around line 40." Never a file with no shown home.
+
+3. **Tidier on the way out.** When Viceroy has to edit a monolith — a 300-line function, a file doing six jobs — it doesn't avert its eyes and it doesn't stop to rewrite from scratch. It improves *the seam it is already working at*: extracts the obvious unit, names the unnamed thing, leaves a `viceroy:` marker so the next reader sees the boundary. Moderate, behavior-preserving, scoped to the blast radius.
 
 ## Before / after
 
@@ -34,7 +41,7 @@ A typical answer:
 
 With Viceroy:
 
-````
+```
 In `service.py`, replace this:
 
 ```python
@@ -64,18 +71,28 @@ with this:
 from functools import lru_cache
 from .models import User
 ```
-````
+```
 
 Two swaps, both verbatim-old → new, both findable in one search. To apply: paste two blocks. Nothing to hunt for. (And if the change had been large, you'd get the whole file instead — Viceroy judges which.)
 
-## The headline metric: applyability
+## Three deterministic gates
 
-A change is good when it drops in clean, and that turns out to be checkable, not a vibe:
+A change is good when it drops in clean *and* actually does the job *and* costs the reader little to act on — and all three turn out to be checkable, not a vibe. Three instruments, each with a `--selftest` that runs with **no API key and no cost**:
+
+| instrument | the question | self-tests |
+|---|---|--:|
+| [`applyability.js`](benchmarks/applyability.js) | does the edit drop in clean? (verbatim, unique, no elision) | 20 |
+| [`blast-radius.js`](benchmarks/blast-radius.js) | did it do the job without breaking a neighbor? | 29 |
+| [`cognitive-load.js`](benchmarks/cognitive-load.js) | what did the instruction cost the human to act on? | 9 |
+
+The first measures delivery, the second correctness, the third — the one that measures what Viceroy is actually *for* — reader effort. They're orthogonal: an edit can apply cleanly yet do nothing (a whole-file dump that silently deletes the target), or fix the bug yet make the human hunt for what changed. Viceroy's claim is all three at once.
+
+### Gate 1 — applyability
+
+The original instrument, and still the floor everything else stands on:
 
 - **Does the edit apply?** For every exact swap, the quoted "old block" must appear in the current file *exactly once*. Zero matches = broken (paraphrased, or a stale file). Two or more = ambiguous (which one?). Both are detectable by searching the file.
 - **Is the file whole?** Every full-file answer must contain no elision markers (`// ... rest`, `# existing code here`, `(unchanged)`, `... keep the rest ...`). A file with a hole where code should be is a failed deliverable, detectably.
-
-`benchmarks/applyability.js` is the instrument. It ships reference good/bad edits and a `--selftest` that runs with **no API key and no cost**, proving the checker can tell an applyable edit from a broken one before any model is ever scored:
 
 ```
 $ node benchmarks/applyability.js --selftest
@@ -168,14 +185,20 @@ node mini-agent.js --model qwen2.5-coder --task dna-guard --compare --runs 10   
 node mini-agent.js --model qwen2.5-coder --task dna-bound --compare --runs 10   # the ceiling
 ```
 
-**What this is not, yet:** a benchmark with the statistical weight of, say, ponytail's 12-task agentic run. One real task with a clean live result, one documented ceiling case, `n=10` on one model family — a start, not exhaustive evidence. See [Roadmap](#roadmap) for what's next: more tasks at `dna-guard`'s difficulty (findable-but-easy-to-miss bugs) across more files, more runs, and a fix to the reader-cost metric below (it still scores qwen's correct-prose answers as high-cost, which contradicts the win above and needs its own format-aware pass before it's trustworthy).
+**Round 8 — the same bug, one metric over.** With correctness fixed, the reader-cost metric (`cognitive-load.js`) was still scoring qwen's correct-prose answer as if the human had to rebuild 85% of it — because its verbatim line-match was whitespace-sensitive, the *same* class of bug just fixed in `blast-radius.js`. The model had handed over the entire corrected function; the reader pastes it; the true cost is near zero. Fixed: coverage is now whitespace-insensitive, and the headline number is coverage-driven `reconstruct`, with the raw `gzip`-NCD demoted to a labeled diagnostic (NCD-to-a-single-function is unreliable when answers differ wildly in length — a whole-file answer shares incidental substrings with any function it contains). qwen's real correct answer now scores **8% reader-reconstruct, not 85%** — the metric finally agrees with the 90% task-done win instead of contradicting it. Pinned as a regression. Self-test: 9 cases. The lesson across Rounds 4, 7, and 8: a deterministic instrument is only trustworthy once it has survived contact with real model output, and every one of these bugs was a scorer mistaking *formatting* for *substance* — found by reading the raw answers, not the summary tables.
+
+ One real task with a clean live result, one documented ceiling case, `n=10` on one model family — a start, not exhaustive evidence. See [Roadmap](#roadmap) for what's next: more tasks at `dna-guard`'s difficulty (findable-but-easy-to-miss bugs) across more files, and more runs. What it *is*: every number above is from a free local model on real, unmodified published code, scored by three deterministic instruments you can run yourself for $0 — and the three instruments agree with each other, which they did not until the scorer bugs below were found and fixed in the open.
 
 ## How it works
 
-When you ask for a code change, Viceroy stops at one question before answering:
+When you ask for a code change, Viceroy stops before answering:
 
 ```
-Can the reader apply this with the least chance of putting it in the wrong place?
+First — anchor:
+  name the exact target, read THAT code (not its look-alike siblings),
+  lift the swap's old-block verbatim from what you just read
+
+Then — can the reader apply this with the least chance of putting it in the wrong place?
 
   creates one or more files             → lead with the directory TREE, then each file by path
   substantial change, or short file     → the WHOLE file
@@ -186,7 +209,7 @@ Then, if you touched a monolith:
   mark it with `viceroy:` — never rewrite what the task didn't send you into
 ```
 
-Never abstract. Never elided. Never a riddle.
+Never aimed at a guess. Never abstract. Never elided. Never a riddle.
 
 ## Install
 
@@ -217,7 +240,7 @@ Modes: `/viceroy auto` (default, judges whole-vs-swap per change), `/viceroy who
 - [x] Two real-world fixture tasks from a byte-exact, unmodified scientific C file — `dna-guard` (missing guard) and `dna-bound` (present-but-insufficient guard, punishes pattern-matching)
 - [x] Second deterministic gate (`blast-radius.js`): task-completion + collateral-damage, fixed to be format-insensitive (a correct, reformatted fix now scores correctly instead of being punished for whitespace) — 29 self-tests, three real model answers pinned as permanent regressions
 - [x] **A real, live result on real model output, n=10, $0:** `dna-guard` shows Viceroy at 90% task-done / 100% collateral-free vs. baseline's 0% / 0% — same model, only the prompt differs. `dna-bound` is an honest, confirmed ceiling (0% both arms at two model sizes, 7.6B and 14B) — the model fails to *locate* the bug, which no prompt fixes. See "What's measured so far" above.
-- [ ] **Next:** fix `cognitive-load.js` to be format-aware (a correct fix delivered as a complete, pasteable function should not score as high reader-cost just because it isn't a byte-perfect swap) — it currently contradicts the win it should be confirming
+- [x] Third deterministic instrument (`cognitive-load.js`): reader-reconstruction cost via whitespace-insensitive coverage + `gzip`-NCD diagnostic — measures what Viceroy is actually *for* (reader effort), made format-aware so a correct fix delivered as a complete pasteable function scores as low-cost, not high. 9 self-tests, qwen's real answer pinned. **All three instruments now agree on the `dna-guard` win.**
 - [ ] More tasks at `dna-guard`'s difficulty (findable-but-easy-to-miss, not `dna-bound`'s reasoning-ceiling difficulty) across more files, more runs, for real statistical weight
 - [ ] Try `dna-bound` against a frontier model, to learn whether it's "real but needs strong reasoning" (keep it, valuable) or "too hard to ever discriminate" (cut it) — not urgent; `dna-guard` alone is the defensible headline
 - [ ] Seam-quality judge for the "tidier on the way out" law (extraction quality, behavior preserved)

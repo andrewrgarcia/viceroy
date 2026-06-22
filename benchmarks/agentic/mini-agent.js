@@ -444,9 +444,9 @@ function printRun({ taskId, arm, answer, scored }, model, demo) {
   if (t.targetEdit) {
     const rl = readerLoad(answer, t.targetEdit);
     console.log('--- reader load (the cost to the human) ' + '-'.repeat(17));
-    console.log('info-distance to edit : ' + rl.ncd.toFixed(3) + '  (lower = instruction is closer to the actual change)');
-    console.log('handed over verbatim  : ' + (rl.coverage * 100).toFixed(0) + '%');
-    console.log('reader reconstructs   : ' + (rl.reconstruct * 100).toFixed(0) + '%  (lower = less cognitive work)');
+    console.log('handed over to reader : ' + (rl.coverage * 100).toFixed(0) + '%  (of the correct edit, format-insensitive)');
+    console.log('reader reconstructs   : ' + (rl.reconstruct * 100).toFixed(0) + '%  (HEADLINE -- lower = less cognitive work)');
+    console.log('  (ncd diagnostic     : ' + rl.ncd.toFixed(3) + '  -- raw gzip distance, unreliable across answer lengths)');
     console.log('-'.repeat(57) + '\n');
   }
 

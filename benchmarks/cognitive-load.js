@@ -62,12 +62,22 @@ function ncd(a, b) {
   return (cab - Math.min(ca, cb)) / Math.max(ca, cb);
 }
 
-// Fraction of T's non-trivial content lines that appear verbatim (trimmed) in I.
+// Whitespace-insensitive canonical form, so a line that's present but re-spaced
+// (`i1 - 1` vs `i1-1`, reindented) still counts as handed-over. This mirrors the
+// same fix made in blast-radius.js: a correct edit delivered in a different
+// format is still delivered -- the reader pastes it, they don't rebuild it.
+// Without this, a model that hands over the whole corrected function as prose
+// (qwen does this constantly) was scored as ~85% reader-reconstruction when the
+// real cost is near zero. Format is a separate axis from how much work the
+// instruction actually saves the reader.
+const canonLine = (s) => String(s).replace(/\s+/g, '');
+
+// Fraction of T's non-trivial content lines that appear in I, ignoring spacing.
 function coverage(instruction, target) {
-  const I = String(instruction);
+  const I = canonLine(instruction);
   const lines = String(target)
     .split('\n')
-    .map((l) => l.trim())
+    .map((l) => canonLine(l))
     .filter((l) => l.length >= 4); // ignore lone braces, blank lines, etc.
   if (lines.length === 0) return 1;
   const present = lines.filter((l) => I.includes(l)).length;
@@ -76,13 +86,22 @@ function coverage(instruction, target) {
 
 // Reader-reconstruction load for instruction I aimed at producing edit T.
 // Lower load = the instruction did more of the reader's work.
+//
+// The HEADLINE number is `reconstruct`, driven by coverage (how much of the edit
+// is actually present in the answer, format-insensitively). `ncd` is reported as
+// a secondary diagnostic only -- it is NOT reliable as the headline when answers
+// differ a lot in length: a whole-file answer shares incidental byte-substrings
+// with any one target function (shared boilerplate across sibling functions), so
+// NCD-to-a-single-function can look small even for an answer that DELETED that
+// function. Coverage doesn't have that failure mode -- it asks the direct
+// question, "are the lines of the correct edit here or not."
 function readerLoad(instruction, target) {
   const d = ncd(instruction, target);
   const cov = coverage(instruction, target);
   return {
-    ncd: +d.toFixed(3), // information distance instruction->edit (lower = less reader work)
-    coverage: +cov.toFixed(3), // share of the edit handed over verbatim (higher = less reader work)
-    reconstruct: +(1 - cov).toFixed(3), // share the reader must generate (lower = less work)
+    coverage: +cov.toFixed(3), // share of the edit handed over (higher = less reader work) -- headline
+    reconstruct: +(1 - cov).toFixed(3), // share the reader must generate (lower = less work) -- headline
+    ncd: +d.toFixed(3), // raw information distance; diagnostic only, see note above
   };
 }
 
@@ -153,6 +172,47 @@ if (require.main === module && process.argv.includes('--selftest')) {
   const half = readerLoad(HALF, TARGET);
   ok(half.coverage > vague.coverage && half.coverage < exact.coverage,
     `partial instruction sits between vague and exact on coverage (${vague.coverage} < ${half.coverage} < ${exact.coverage})`);
+
+  // THE fix: an instruction that hands over the whole correct edit but REFORMATTED
+  // (re-spaced, reindented) must still score as low reader-reconstruction. Before
+  // the whitespace-insensitive coverage fix, this scored as if the reader had to
+  // rebuild everything, purely because of spacing -- the same class of bug found
+  // in blast-radius. The reader pastes a complete function; cost is near zero.
+  const REFORMATTED = [
+    'Here is the corrected guard function:',
+    '',
+    '```c',
+    'float guard( int i ) {',
+    '    float v;',
+    '    if ( i + 2 > N ) v = 0.0;',
+    '    else { v = compute( i ); }',
+    '    return v;',
+    '}',
+    '```',
+  ].join('\n');
+  const ref = readerLoad(REFORMATTED, TARGET);
+  ok(ref.reconstruct < 0.25,
+    `a complete but REFORMATTED edit scores LOW reconstruction (${ref.reconstruct} < 0.25), not punished for whitespace`);
+
+  // Real captured answer: qwen's correct dna-guard fix, delivered as reformatted
+  // prose. Pinned so the fix can't regress. (Skipped if fixtures absent.)
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.join(__dirname, 'agentic', 'fixtures', 'DNA_slice.c'), 'utf8');
+    const s = src.indexOf('float PCN(');
+    const e = src.indexOf('\nfloat NCP(', s);
+    const pcn = src.slice(s, e);
+    const realTarget = pcn
+      .replace(' float d1,d2,d3,w,a1,ue0;', ' float d1,d2,d3,w,a1,ue0;\n if(i1+2>N0)  ue0=0.0;\n else {')
+      .replace(' ue0=kpcN*(a1-ApcN)*(a1-ApcN);', ' ue0=kpcN*(a1-ApcN)*(a1-ApcN);\n }');
+    const realAns = fs.readFileSync(path.join(__dirname, 'agentic', 'fixtures', 'qwen_viceroy_dnaguard_correct.txt'), 'utf8');
+    const real = readerLoad(realAns, realTarget);
+    ok(real.reconstruct < 0.2,
+      `real qwen correct prose fix scores LOW reconstruction (${real.reconstruct} < 0.2) -- it contains the whole function`);
+  } catch (err) {
+    console.log('-- (skipped real-capture regression: fixtures not found)');
+  }
 
   console.log(`\nself-test: ${pass} passed, ${fail} failed${fail ? '  -- BROKEN' : '  -- all instruments valid'}`);
   process.exit(fail ? 1 : 0);
